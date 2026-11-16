@@ -1,0 +1,194 @@
+//------------------------------------------------
+// is5_diag.bt
+//
+// Diagnose-Template fuer InstallShield-5.x Header-/Cab-Dateien
+// (.hdr und dataN.cab). Gibt Common-Header, Volume-Header (falls
+// vorhanden) und - falls diese Datei die Header/Filetable traegt -
+// die Datei-Deskriptoren fuer eine Watchlist von Dateinamen aus.
+//
+// Verwendung:
+//   1. data1.hdr (oder data1.cab, falls kein separates .hdr existiert)
+//      in 010 Editor oeffnen, dieses Template laufen lassen
+//      (Templates > Run Template, oder F5/Strg+F5 je nach Version).
+//   2. Output/Script-Output-Panel kopieren.
+//   3. Dasselbe fuer jede weitere dataN.cab (data2.cab, data3.cab, ...)
+//      wiederholen.
+//   4. Alle Ausgaben zurueckschicken.
+//
+// Die Watchlist unten (watchlistNames) laesst sich beliebig erweitern -
+// einfach weitere Dateinamen eintragen.
+//------------------------------------------------
+
+LittleEndian();
+
+local uint32 CAB_SIGNATURE = 0x28635349; // "ISc(" little-endian
+local uint32 sig = ReadUInt(0);
+
+if (sig != CAB_SIGNATURE) {
+    Printf("FEHLER: Datei beginnt nicht mit der ISc(-Signatur (gelesen: 0x%08X).\n", sig);
+    Printf("Ist das wirklich eine InstallShield-5.x-Datei?\n");
+    return -1;
+}
+
+local uint32 version               = ReadUInt(4);
+local uint32 volume_info           = ReadUInt(8);
+local uint32 cab_descriptor_offset = ReadUInt(12);
+local uint32 cab_descriptor_size   = ReadUInt(16);
+
+local int major_version;
+local uint32 mv;
+if ((version >> 24) == 1) {
+    major_version = (version >> 12) & 0xF;
+} else if ((version >> 24) == 2 || (version >> 24) == 4) {
+    mv = version & 0xFFFF;
+    major_version = (mv != 0) ? (mv / 100) : 0;
+} else {
+    major_version = 0;
+}
+
+Printf("========================================\n");
+Printf("Datei: %s\n", GetFileName());
+Printf("Groesse: %u Bytes\n", FileSize());
+Printf("========================================\n\n");
+
+Printf("=== Common Header ===\n");
+Printf("version               = 0x%08X\n", version);
+Printf("major_version         = %d\n", major_version);
+Printf("volume_info           = 0x%08X\n", volume_info);
+Printf("cab_descriptor_offset = %u (0x%X)\n", cab_descriptor_offset, cab_descriptor_offset);
+Printf("cab_descriptor_size   = %u\n", cab_descriptor_size);
+Printf("\n");
+
+// --- Volume-Header (Bytes 20..60) ---
+// Nur inhaltlich gueltig, wenn diese Datei ein reines dataN.cab-
+// Datenvolume ist (kein eigenes .hdr). Bei einer .hdr-Datei stehen
+// an dieser Stelle stattdessen die ersten Bytes des Cab-Descriptors -
+// die Werte sehen dann typischerweise unplausibel aus (das ist normal,
+// einfach ignorieren).
+if (FileSize() >= 60) {
+    local uint32 vh_data_offset           = ReadUInt(20);
+    local uint32 vh_unknown               = ReadUInt(24);
+    local uint32 vh_first_file_index      = ReadUInt(28);
+    local uint32 vh_last_file_index       = ReadUInt(32);
+    local uint32 vh_first_file_offset     = ReadUInt(36);
+    local uint32 vh_first_size_expanded   = ReadUInt(40);
+    local uint32 vh_first_size_compressed = ReadUInt(44);
+    local uint32 vh_last_file_offset      = ReadUInt(48);
+    local uint32 vh_last_size_expanded    = ReadUInt(52);
+    local uint32 vh_last_size_compressed  = ReadUInt(56);
+
+    Printf("=== Volume-Header (Bytes 20-60) ===\n");
+    Printf("(nur relevant, wenn dies KEIN separates .hdr ist, sondern ein reines dataN.cab)\n");
+    Printf("first_file_index      = %u\n", vh_first_file_index);
+    Printf("last_file_index       = %u\n", vh_last_file_index);
+    Printf("first_file_offset     = %u\n", vh_first_file_offset);
+    Printf("first_size_expanded   = %u\n", vh_first_size_expanded);
+    Printf("first_size_compressed = %u\n", vh_first_size_compressed);
+    Printf("last_file_offset      = %u\n", vh_last_file_offset);
+    Printf("last_size_expanded    = %u\n", vh_last_size_expanded);
+    Printf("last_size_compressed  = %u\n", vh_last_size_compressed);
+    Printf("\n");
+}
+
+// --- Cab-Descriptor + Filetable ---
+// Nur vorhanden/gueltig in der Datei, die den Header traegt (typischerweise
+// data1.hdr, oder data1.cab falls kein separates .hdr existiert).
+local int have_descriptor = 0;
+
+if (cab_descriptor_offset > 0 && cab_descriptor_offset + 0x30 <= FileSize()) {
+    local uint32 cdo = cab_descriptor_offset;
+    local uint32 file_table_offset = ReadUInt(cdo + 0xC);
+    local uint32 directory_count   = ReadUInt(cdo + 0x1C);
+    local uint32 file_count        = ReadUInt(cdo + 0x28);
+    local uint32 base              = cdo + file_table_offset;
+
+    if (directory_count < 1000 && file_count < 200000 && base < FileSize()) {
+        have_descriptor = 1;
+
+        Printf("=== Cab-Descriptor (bei Offset %u) ===\n", cdo);
+        Printf("file_table_offset = %u\n", file_table_offset);
+        Printf("directory_count   = %u\n", directory_count);
+        Printf("file_count        = %u\n", file_count);
+        Printf("\n");
+
+        Printf("=== Verzeichnisse ===\n");
+        local uint32 i;
+        local uint32 dir_off;
+        local string dname;
+        for (i = 0; i < directory_count; i++) {
+            dir_off = ReadUInt(base + i * 4);
+            dname = ReadString(base + dir_off);
+            Printf("  [%u] %s\n", i, dname);
+        }
+        Printf("\n");
+
+        // -------- Watchlist: hier Dateinamen eintragen/erweitern --------
+        local string watch0 = "WORLDS.REZ";
+        local string watch1 = "MountainPass.eal";
+        local string watch2 = "VOICES.REZ";
+        local int watchlistCount = 3;
+
+        // ------------------------------------------------------------------
+
+        Printf("=== Treffer aus der Watchlist ===\n");
+
+        local uint32 fd_off;
+        local uint32 name_off;
+        local ushort dir_idx;
+        local ushort flags;
+        local uint32 expanded_size;
+        local uint32 compressed_size;
+        local uint32 data_offset;
+        local string fname;
+        local int w;
+        local int found_any = 0;
+
+        for (i = 0; i < file_count; i++) {
+            fd_off = base + ReadUInt(base + (directory_count + i) * 4);
+
+            name_off        = ReadUInt(fd_off + 0);
+            dir_idx         = ReadUShort(fd_off + 4);
+            flags           = ReadUShort(fd_off + 8);
+            expanded_size   = ReadUInt(fd_off + 10);
+            compressed_size = ReadUInt(fd_off + 14);
+            data_offset     = ReadUInt(fd_off + 38); // 4+2+2+2+4+4+20 = 38
+
+            fname = ReadString(base + name_off);
+
+            for (w = 0; w < watchlistCount; w++) {
+                if (fname == watch0 || fname == watch1 || fname == watch2) {
+                    found_any = 1;
+                    Printf("\n--- Treffer: %s (globaler Index %u) ---\n", fname, i);
+                    if (dir_idx < directory_count) {
+                        Printf("  directory        = [%u] %s\n", dir_idx,
+                            ReadString(base + ReadUInt(base + dir_idx * 4)));
+                    } else {
+                        Printf("  directory_index  = %u (ausserhalb von directory_count!)\n", dir_idx);
+                    }
+                    Printf("  flags (roh)      = 0x%04X\n", flags);
+                    Printf("    FILE_SPLIT      = %d\n", (flags & 0x1) != 0);
+                    Printf("    FILE_OBFUSCATED = %d\n", (flags & 0x2) != 0);
+                    Printf("    FILE_COMPRESSED = %d\n", (flags & 0x4) != 0);
+                    Printf("    FILE_INVALID    = %d\n", (flags & 0x8) != 0);
+                    Printf("  expanded_size    = %u\n", expanded_size);
+                    Printf("  compressed_size  = %u\n", compressed_size);
+                    Printf("  data_offset      = %u\n", data_offset);
+                }
+            }
+        }
+
+        if (!found_any) {
+            Printf("(keiner der Watchlist-Namen in dieser Datei gefunden)\n");
+        }
+    }
+}
+
+if (!have_descriptor) {
+    Printf("=== Cab-Descriptor ===\n");
+    Printf("Kein gueltiger Cab-Descriptor an dieser Stelle gefunden - \n");
+    Printf("normal, wenn dies ein reines dataN.cab-Datenvolume (N >= 2) ist.\n");
+}
+
+Printf("\n========================================\n");
+Printf("Fertig. Bitte diese komplette Ausgabe kopieren.\n");
+Printf("========================================\n");
