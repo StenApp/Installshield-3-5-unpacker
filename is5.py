@@ -145,6 +145,11 @@ class FileEntry:
             return True
         if self.invalid:
             return False
+        # Variante B gilt nur fuer selbsttragende .cab (Katalog + Daten in
+        # einer Datei). Bei separater .hdr liegen die Daten in dataN.cab,
+        # data_offset ist dann relativ dazu und kann beliebig > len(.hdr) sein.
+        if header.path.lower().endswith(".hdr"):
+            return False
         if self.volume == 1 and self.data_offset >= len(header.data):
             return True
         return False
